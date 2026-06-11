@@ -89,6 +89,11 @@ describe("validateToolArguments", () => {
 				input: "1",
 				expected: 1,
 			},
+			{
+				schema: { type: ["array", "null"], items: { type: "string" } } as Tool["parameters"],
+				input: null,
+				expected: null,
+			},
 		];
 
 		for (const testCase of passingCases) {

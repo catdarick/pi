@@ -63,9 +63,20 @@ function isValidatorSchema(value: unknown): value is Tool["parameters"] {
 	return isRecord(value);
 }
 
-function getSubSchemaValidator(schema: JsonSchemaObject): ReturnType<typeof Compile> | undefined {
+function getSubSchemaValidator(schema: JsonSchemaObject): { Check: (value: unknown) => boolean } | undefined {
 	if (!isValidatorSchema(schema)) {
 		return undefined;
+	}
+	if (!hasTypeBoxMetadata(schema)) {
+		return {
+			Check: (value: unknown) => {
+				try {
+					return Value.Check(schema, value);
+				} catch {
+					return false;
+				}
+			},
+		};
 	}
 	try {
 		return getValidator(schema);
@@ -291,10 +302,13 @@ export function validateToolCall(tools: Tool[], toolCall: ToolCall): any {
  */
 export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	const args = structuredClone(toolCall.arguments);
-	Value.Convert(tool.parameters, args);
+	const isTypeBoxSchema = hasTypeBoxMetadata(tool.parameters);
+	if (isTypeBoxSchema) {
+		Value.Convert(tool.parameters, args);
+	}
 
-	const validator = getValidator(tool.parameters);
-	if (!hasTypeBoxMetadata(tool.parameters) && isJsonSchemaObject(tool.parameters)) {
+	const validator = isTypeBoxSchema ? getValidator(tool.parameters) : null;
+	if (!isTypeBoxSchema && isJsonSchemaObject(tool.parameters)) {
 		const coerced = coerceWithJsonSchema(args, tool.parameters);
 		if (coerced !== args) {
 			if (isRecord(args) && isRecord(coerced)) {
@@ -303,18 +317,20 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 				}
 				Object.assign(args, coerced);
 			} else {
-				return validator.Check(coerced) ? coerced : args;
+				return Value.Check(tool.parameters, coerced) ? coerced : args;
 			}
 		}
 	}
 
-	if (validator.Check(args)) {
+	const isValid = isTypeBoxSchema ? validator?.Check(args) : Value.Check(tool.parameters, args);
+	if (isValid) {
 		return args;
 	}
 
+	const validationErrors = isTypeBoxSchema ? validator?.Errors(args) : Value.Errors(tool.parameters, args);
+
 	const errors =
-		validator
-			.Errors(args)
+		Array.from(validationErrors ?? [])
 			.map((error) => `  - ${formatValidationPath(error)}: ${error.message}`)
 			.join("\n") || "Unknown validation error";
 
